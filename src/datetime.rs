@@ -105,49 +105,40 @@ impl DateTimeParts {
 
 impl From<&DateTime> for DateTimeParts {
     fn from(excel_date: &DateTime) -> DateTimeParts {
-        let (year, mut remaining) = excel_date.get_year_and_remainder();
+        let (year, mut rem_days) = excel_date.get_year_and_remaining_days();
+        println!("Days After Year: {rem_days}");
 
         let month = {
             let mut m = 1;
             loop {
-                let ms_in_month = get_days_in_month(m, year) as i64 * MS_PER_DAY;
-                if remaining < ms_in_month {
+                let days = get_days_in_month(m, year) as f64;
+                if rem_days < days {
                     break;
                 } else {
-                    remaining -= ms_in_month;
+                    rem_days -= days;
                     m += 1;
                 }
             }
             m as u8
         };
 
-        let (day, hour, minute, second, millisecond) = {
-            let d = (remaining / MS_PER_DAY) as u8 + 1;
-            remaining = match remaining < 0 {
-                true => remaining + (d - 1) as i64 * MS_PER_DAY,
-                false => remaining - (d - 1) as i64 * MS_PER_DAY,
-            };
+        let day = rem_days as u8 + 1;
+        rem_days -= day as f64 - 1.0;
 
-            let h = (remaining / MS_PER_HOUR) as u8;
-            remaining = match remaining < 0 {
-                true => remaining + h as i64 * MS_PER_HOUR,
-                false => remaining - h as i64 * MS_PER_HOUR,
-            };
+        let (hour, minute, second, millisecond) = {
+            let mut rem_ms = (rem_days * MS_PER_DAY as f64) as i64;
 
-            let m = (remaining / MS_PER_MIN) as u8;
-            remaining = match remaining < 0 {
-                true => remaining + m as i64 * MS_PER_MIN,
-                false => remaining - m as i64 * MS_PER_MIN,
-            };
+            let h = (rem_ms / MS_PER_HOUR) as u8;
+            rem_ms -= h as i64 * MS_PER_HOUR;
 
-            let s = (remaining / MS_PER_SEC) as u8;
-            remaining = match remaining < 0 {
-                true => remaining + s as i64 * MS_PER_SEC,
-                false => remaining - s as i64 * MS_PER_SEC,
-            };
+            let m = (rem_ms / MS_PER_MIN) as u8;
+            rem_ms -= m as i64 * MS_PER_MIN;
 
-            let ms = remaining as u16;
-            (d, h, m, s, ms)
+            let s = (rem_ms / MS_PER_SEC) as u8;
+            rem_ms -= s as i64 * MS_PER_SEC;
+
+            let ms = rem_ms as u16;
+            (h, m, s, ms)
         };
 
         DateTimeParts::new(year, month, day, hour, minute, second, millisecond)
@@ -471,38 +462,38 @@ impl DateTime {
     }
 
     pub fn is_leap_year(&self) -> bool {
-        let (y, _) = self.get_year_and_remainder();
+        let (y, _) = self.get_year_and_remaining_days();
         is_leap_year(y)
     }
 
-    fn get_year_and_remainder(&self) -> (i32, i64) {
-        let mut remaining = self.0.as_days();
+    fn get_year_and_remaining_days(&self) -> (i32, f64) {
+        let mut rem = self.0.as_days();
         let mut y = EPOCH;
 
-        if remaining > 0.0 {
+        if rem > 0.0 {
             loop {
                 let days = get_days_in_year(y) as f64;
-                if remaining < days {
+                if rem < days {
                     break;
                 }
-                remaining -= days;
+                rem -= days;
                 y += 1;
             }
         } else {
             loop {
                 let days_prev = get_days_in_year(y - 1) as f64;
-                if -remaining <= days_prev {
+                if -rem <= days_prev {
                     // remaining fits in the previous year
                     y -= 1;
-                    remaining += days_prev;
+                    rem += days_prev;
                     break;
                 }
-                remaining += days_prev;
+                rem += days_prev;
                 y -= 1;
             }
         }
 
-        (y, (remaining * MS_PER_DAY as f64) as i64)
+        (y, rem)
     }
 }
 
@@ -536,17 +527,14 @@ impl TryFrom<&str> for DateTime {
     /// # Examples
     ///
     /// ```
-    /// use excel_xml::datetime::DateTime;
+    /// use excel_xml::datetime::{DateTime, DateTimeParts};
     ///
     /// let a = DateTime::try_from("2020-01-01T00:00:00.000").unwrap();
     /// assert_eq!(a.parts().year, 2020);
     ///
-    /// let b = DateTime::try_from("-2020-03-02T01:00:00.000").unwrap();
-    /// let b_parts = b.parts();
-    /// assert_eq!(b_parts.year, -2020);
-    /// assert_eq!(b_parts.month, 3);
-    /// assert_eq!(b_parts.day, 2);
-    /// assert_eq!(b_parts.hour, 1);
+    /// let b = DateTime::try_from("-2020-03-02T01:00:00.100").unwrap();
+    /// let c = DateTimeParts::new(-2020, 3, 2, 1, 0, 0, 100);
+    /// assert_eq!(b.parts(), c);
     /// ```
     fn try_from(s: &str) -> Result<DateTime, Self::Error> {
         let parts = DateTimeParts::try_from(s)?;
