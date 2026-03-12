@@ -16,20 +16,21 @@ pub struct ParseError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurationParts {
     pub days: i64,
-    pub hours: u8,
-    pub minutes: u8,
-    pub seconds: u8,
-    pub milliseconds: u16,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+    pub millisecond: u16,
 }
 
 impl DurationParts {
-    pub fn new(days: i64, hours: u8, minutes: u8, seconds: u8, milliseconds: u16) -> DurationParts {
+    // TODO: Guards
+    pub fn new(days: i64, hour: u8, minute: u8, second: u8, millisecond: u16) -> DurationParts {
         DurationParts {
             days,
-            hours,
-            minutes,
-            seconds,
-            milliseconds,
+            hour,
+            minute,
+            second,
+            millisecond,
         }
     }
 }
@@ -55,13 +56,69 @@ impl From<&Duration> for DurationParts {
     }
 }
 
+impl TryFrom<&str> for DurationParts {
+    type Error = ParseError;
+
+    /// Parses a datetime string in the format `(-)YYYY-MM-DDTHH:MM:SS.SSS` into a `DateTimeParts` struct.
+    ///
+    /// # Errors
+    ///
+    /// `ParseError` if the input string is empty or does not contain a valid datetime format.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use excel_xml::datetime::DurationParts;
+    ///
+    /// let a = DurationParts::try_from("1:00:00:00.000").unwrap();
+    /// assert_eq!(a.days, 1);
+    ///
+    /// let b = DurationParts::try_from("-20:01:00:00.100").unwrap();
+    /// let c = DurationParts::new(-20, 1, 0, 0, 100);
+    /// assert_eq!(b, c);
+    /// ```
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let bytes = value.as_bytes();
+        if bytes.is_empty() {
+            return Err(ParseError);
+        }
+
+        let mut idx = 0;
+
+        if bytes[idx] == b'-' {
+            idx += 1;
+        }
+        let day_start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if idx == day_start {
+            return Err(ParseError);
+        }
+
+        let days = match slice(value, 0, idx)?.parse::<i64>() {
+            Ok(d) => d,
+            _ => return Err(ParseError),
+        };
+        println!("Days: {days}");
+
+        if bytes.get(idx) != Some(&b':') {
+            return Err(ParseError);
+        }
+        idx += 1;
+
+        let (hour, minute, second, millisecond) = parse_time(value, bytes, idx)?;
+        Ok(DurationParts::new(days, hour, minute, second, millisecond))
+    }
+}
+
 impl fmt::Display for DurationParts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let sign = if self.days < 0 { "-" } else { "" };
         write!(
             f,
             "{sign}{}:{:02}:{:02}:{:02}.{:03}",
-            self.days, self.hours, self.minutes, self.seconds, self.milliseconds
+            self.days, self.hour, self.minute, self.second, self.millisecond
         )
     }
 }
@@ -78,6 +135,7 @@ pub struct DateTimeParts {
 }
 
 impl DateTimeParts {
+    // TODO: Add guards
     pub fn new(
         year: i32,
         month: u8,
@@ -181,73 +239,37 @@ impl TryFrom<&str> for DateTimeParts {
             return Err(ParseError);
         }
 
-        let slice = |a: usize, b: usize| value.get(a..b).ok_or(ParseError);
-
-        let year = match slice(0, idx)?.parse::<i32>() {
+        let year = match slice(value, 0, idx)?.parse::<i32>() {
             Ok(y) if y != 0 => y,
             _ => return Err(ParseError),
         };
-
         if bytes.get(idx) != Some(&b'-') {
             return Err(ParseError);
         }
         idx += 1;
-        let month = match slice(idx, idx + 2)?.parse::<u8>() {
+
+        let month = match slice(value, idx, idx + 2)?.parse::<u8>() {
             Ok(m) if m >= 1 && m <= 12 => m,
             _ => return Err(ParseError),
         };
-
         if bytes.get(idx + 2) != Some(&b'-') {
             return Err(ParseError);
         }
         idx += 3;
-        let day = match slice(idx, idx + 2)?.parse::<u8>() {
+
+        let day = match slice(value, idx, idx + 2)?.parse::<u8>() {
             Ok(d) if d >= 1 && d <= 31 => d,
             _ => return Err(ParseError),
         };
         if day > get_days_in_month(month, year) {
             return Err(ParseError);
         }
-
         if bytes.get(idx + 2) != Some(&b'T') {
             return Err(ParseError);
         }
         idx += 3;
-        let hour = match slice(idx, idx + 2)?.parse::<u8>() {
-            Ok(h) if h <= 23 => h,
-            _ => return Err(ParseError),
-        };
 
-        if bytes.get(idx + 2) != Some(&b':') {
-            return Err(ParseError);
-        }
-        idx += 3;
-        let minute = match slice(idx, idx + 2)?.parse::<u8>() {
-            Ok(m) if m <= 59 => m,
-            _ => return Err(ParseError),
-        };
-
-        if bytes.get(idx + 2) != Some(&b':') {
-            return Err(ParseError);
-        }
-        idx += 3;
-        let second = match slice(idx, idx + 2)?.parse::<u8>() {
-            Ok(s) if s <= 59 => s,
-            _ => return Err(ParseError),
-        };
-
-        if bytes.get(idx + 2) != Some(&b'.') {
-            return Err(ParseError);
-        }
-        idx += 3;
-        let millisecond = match slice(idx, idx + 3)?.parse::<u16>() {
-            Ok(ms) if ms <= 999 => ms,
-            _ => return Err(ParseError),
-        };
-
-        if idx + 3 != bytes.len() {
-            return Err(ParseError);
-        }
+        let (hour, minute, second, millisecond) = parse_time(value, bytes, idx)?;
         Ok(DateTimeParts::new(
             year,
             month,
@@ -341,10 +363,10 @@ impl From<DurationParts> for Duration {
     fn from(parts: DurationParts) -> Duration {
         Duration::new(
             parts.days,
-            parts.hours as i64,
-            parts.minutes as i64,
-            parts.seconds as i64,
-            parts.milliseconds as i64,
+            parts.hour as i64,
+            parts.minute as i64,
+            parts.second as i64,
+            parts.millisecond as i64,
         )
     }
 }
@@ -667,4 +689,46 @@ fn calculate_year_offset(year: i32) -> i64 {
 
 fn calculate_month_offset(month: u8, year: i32) -> i64 {
     (1..month).fold(0, |acc, i| acc + get_days_in_month(i, year) as i64)
+}
+
+fn slice(s: &str, start: usize, end: usize) -> Result<&str, ParseError> {
+    s.get(start..end).ok_or(ParseError)
+}
+
+fn parse_time(value: &str, bytes: &[u8], mut idx: usize) -> Result<(u8, u8, u8, u16), ParseError> {
+    let hour = match slice(value, idx, idx + 2)?.parse::<u8>() {
+        Ok(h) if h <= 23 => h,
+        _ => return Err(ParseError),
+    };
+    if bytes.get(idx + 2) != Some(&b':') {
+        return Err(ParseError);
+    }
+    idx += 3;
+
+    let minute = match slice(value, idx, idx + 2)?.parse::<u8>() {
+        Ok(m) if m <= 59 => m,
+        _ => return Err(ParseError),
+    };
+    if bytes.get(idx + 2) != Some(&b':') {
+        return Err(ParseError);
+    }
+    idx += 3;
+
+    let second = match slice(value, idx, idx + 2)?.parse::<u8>() {
+        Ok(s) if s <= 59 => s,
+        _ => return Err(ParseError),
+    };
+    if bytes.get(idx + 2) != Some(&b'.') {
+        return Err(ParseError);
+    }
+    idx += 3;
+
+    let millisecond = match slice(value, idx, idx + 3)?.parse::<u16>() {
+        Ok(ms) if ms <= 999 => ms,
+        _ => return Err(ParseError),
+    };
+    match idx + 3 != bytes.len() {
+        true => return Err(ParseError),
+        false => Ok((hour, minute, second, millisecond)),
+    }
 }
