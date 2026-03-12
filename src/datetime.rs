@@ -10,12 +10,8 @@ pub const MS_PER_DAY: i64 = MS_PER_HOUR * 24;
 
 pub const MONTH_LENGTHS: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ParseError {
-    InvalidFormat,
-    InvalidDate,
-    InvalidTime,
-}
+#[derive(Debug)]
+pub struct ParseError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurationParts {
@@ -152,11 +148,7 @@ impl TryFrom<&str> for DateTimeParts {
     ///
     /// # Errors
     ///
-    /// `ParseError::InvalidFormat` if the input string is empty or does not contain a valid datetime format.
-    ///
-    /// `ParseError::InvalidDate` if any of the date parts fall outside range.
-    ///
-    /// `ParseError::InvalidTime` if any of the time parts fall outside range.
+    /// `ParseError` if the input string is empty or does not contain a valid datetime format.
     ///
     /// # Examples
     ///
@@ -165,17 +157,15 @@ impl TryFrom<&str> for DateTimeParts {
     ///
     /// let a = DateTimeParts::try_from("2020-01-01T00:00:00.000").unwrap();
     /// assert_eq!(a.year, 2020);
-    /// assert_eq!(a.hour, 0);
     ///
-    /// let b = DateTimeParts::try_from("-2020-01-01T01:00:00.010").unwrap();
-    /// assert_eq!(b.year, -2020);
-    /// assert_eq!(b.hour, 1);
-    /// assert_eq!(b.millisecond, 10);
+    /// let b = DateTimeParts::try_from("-2020-03-02T01:00:00.100").unwrap();
+    /// let c = DateTimeParts::new(-2020, 3, 2, 1, 0, 0, 100);
+    /// assert_eq!(b, c);
     /// ```
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         let bytes = value.as_bytes();
         if bytes.is_empty() {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
 
         let mut idx = 0;
@@ -188,82 +178,75 @@ impl TryFrom<&str> for DateTimeParts {
             idx += 1;
         }
         if idx == year_start {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
 
-        let slice = |a: usize, b: usize| value.get(a..b).ok_or(ParseError::InvalidFormat);
+        let slice = |a: usize, b: usize| value.get(a..b).ok_or(ParseError);
 
         let year = match slice(0, idx)?.parse::<i32>() {
             Ok(y) if y != 0 => y,
-            Ok(_) => return Err(ParseError::InvalidDate),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if bytes.get(idx) != Some(&b'-') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 1;
         let month = match slice(idx, idx + 2)?.parse::<u8>() {
             Ok(m) if m >= 1 && m <= 12 => m,
-            Ok(_) => return Err(ParseError::InvalidDate),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if bytes.get(idx + 2) != Some(&b'-') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 3;
         let day = match slice(idx, idx + 2)?.parse::<u8>() {
             Ok(d) if d >= 1 && d <= 31 => d,
-            Ok(_) => return Err(ParseError::InvalidDate),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
         if day > get_days_in_month(month, year) {
-            return Err(ParseError::InvalidDate);
+            return Err(ParseError);
         }
 
         if bytes.get(idx + 2) != Some(&b'T') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 3;
         let hour = match slice(idx, idx + 2)?.parse::<u8>() {
             Ok(h) if h <= 23 => h,
-            Ok(_) => return Err(ParseError::InvalidTime),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if bytes.get(idx + 2) != Some(&b':') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 3;
         let minute = match slice(idx, idx + 2)?.parse::<u8>() {
             Ok(m) if m <= 59 => m,
-            Ok(_) => return Err(ParseError::InvalidTime),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if bytes.get(idx + 2) != Some(&b':') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 3;
         let second = match slice(idx, idx + 2)?.parse::<u8>() {
             Ok(s) if s <= 59 => s,
-            Ok(_) => return Err(ParseError::InvalidTime),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if bytes.get(idx + 2) != Some(&b'.') {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         idx += 3;
         let millisecond = match slice(idx, idx + 3)?.parse::<u16>() {
             Ok(ms) if ms <= 999 => ms,
-            Ok(_) => return Err(ParseError::InvalidTime),
-            Err(_) => return Err(ParseError::InvalidFormat),
+            _ => return Err(ParseError),
         };
 
         if idx + 3 != bytes.len() {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError);
         }
         Ok(DateTimeParts::new(
             year,
@@ -518,11 +501,7 @@ impl TryFrom<&str> for DateTime {
     ///
     /// # Errors
     ///
-    /// `ParseError::InvalidFormat` if the input string is empty or does not contain a valid datetime format.
-    ///
-    /// `ParseError::InvalidDate` if any of the date parts fall outside range.
-    ///
-    /// `ParseError::InvalidTime` if any of the time parts fall outside range.
+    /// `ParseError` if the input string is empty or does not contain a valid datetime format.
     ///
     /// # Examples
     ///
